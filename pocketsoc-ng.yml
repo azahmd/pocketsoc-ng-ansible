@@ -56,6 +56,11 @@
         enabled: true
         state: started
 
+    - name: create docker volume for certificate
+      docker_volume:
+        name: certificates
+        state: present
+
     - name: Install certificates
       ansible.builtin.git:
         repo: https://www.github.com/azahmd/pocketsoc-ng-certificates/
@@ -77,6 +82,10 @@
     - name: check admin password
       ansible.builtin.debug:
         msg: "{{ adminpassword.stdout }}"
+
+#    - name: Get user home directory
+#      ansible.builtin.set_fact:
+#        user_home: "{{ ansible_env.HOME }}"
 
     - name: separate password for opensearch
       shell: echo "{{ OPENSEARCH_INITIAL_ADMIN_PASSWORD }}"
@@ -146,11 +155,20 @@
     - name: check environments
       ansible.builtin.debug:
         msg: "{{ environments.json[0].Id }}"
-
+   
     - name: Pull repository
       git:
         repo: 'https://github.com/azahmd/pocketsoc-ng'
-        dest: 'pocketsoc-ng'
+        dest: "{{ ansible_env.HOME }}/pocketsoc-ng"
+        version: 'opensearch'
+        force: yes
+
+    - name: Configure OpenSearch Dashboards
+      template:
+        src: templates/opensearch_dashboards.yml.j2
+        dest: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch_dashboards/config/opensearch_dashboards.yml"
+        force: yes
+#      when: inventory_hostname in ['node-1', 'node-2']
 
     - name: set portainer stacks
       ignore_errors: yes
@@ -158,11 +176,17 @@
         url: "http://localhost:8081/api/stacks?type=2&method=repository&endpointId={{ environments.json[0].Id }}"
         method: POST
         timeout: 600
-        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/main\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ opensearch_initial_admin_password.stdout }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
+        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/opensearch\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ opensearch_initial_admin_password.stdout }}\"},{\"name\": \"MISP_HOSTNAME\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}/{{ inventory_hostname }}/misp\"},{\"name\": \"NODE_NAME\", \"value\": \"{{ inventory_hostname }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
         body_format: json
         headers:
           Content-Type: "application/json"
           Authorization: "{{ auth.json.jwt  }}"
+
+#    - name: Copy misp config to nodes
+#      template:
+#        src: templates/config.php.j2
+#        dest: "/data/compose/1/persistent/pocketsoc-ng/data/config/config.php"
+#      when: inventory_hostname in ['node-1', 'node-2']
 
     - name: Wait for opensearch to come up
       ansible.builtin.wait_for:
