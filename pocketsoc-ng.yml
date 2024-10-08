@@ -79,7 +79,7 @@
       shell: "{{ admin_password_command }}"
       register: adminpassword
 
-    - name: check admin password
+    - name: check portainer admin password
       ansible.builtin.debug:
         msg: "{{ adminpassword.stdout }}"
 
@@ -87,13 +87,23 @@
 #      ansible.builtin.set_fact:
 #        user_home: "{{ ansible_env.HOME }}"
 
-    - name: separate password for opensearch
-      shell: echo "{{ OPENSEARCH_INITIAL_ADMIN_PASSWORD }}"
-      register: opensearch_initial_admin_password
+#    - name: separate password for opensearch
+#      shell: echo "{{ OPENSEARCH_INITIAL_ADMIN_PASSWORD }}"
+#      register: opensearch_initial_admin_password
+
+#    - name: check opensearch admin password
+#      ansible.builtin.debug:
+#        msg: "{{ opensearch_initial_admin_password.stdout }}"
+
+    - name: build opensearch admin password
+      tags:
+        - test
+      shell: "{{ admin_password_command }}"
+      register: openpassword
 
     - name: check opensearch admin password
       ansible.builtin.debug:
-        msg: "{{ opensearch_initial_admin_password.stdout }}"
+        msg: "{{ openpassword.stdout }}"
 
     - name: set portainer admin password
       # ignore_errors: yes
@@ -163,7 +173,8 @@
         version: 'opensearch'
         force: yes
 
-    - name: Configure OpenSearch Dashboards
+
+    - name: Copy OpenSearch Dashboards template 
       template:
         src: templates/opensearch_dashboards.yml.j2
         dest: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch_dashboards/config/opensearch_dashboards.yml"
@@ -176,7 +187,7 @@
         url: "http://localhost:8081/api/stacks?type=2&method=repository&endpointId={{ environments.json[0].Id }}"
         method: POST
         timeout: 600
-        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/opensearch\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ opensearch_initial_admin_password.stdout }}\"},{\"name\": \"MISP_HOSTNAME\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}/{{ inventory_hostname }}/misp\"},{\"name\": \"NODE_NAME\", \"value\": \"{{ inventory_hostname }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
+        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/opensearch\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ openpassword.stdout }}\"},{\"name\": \"MISP_HOSTNAME\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}/{{ inventory_hostname }}/misp\"},{\"name\": \"NODE_NAME\", \"value\": \"{{ inventory_hostname }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
         body_format: json
         headers:
           Content-Type: "application/json"
@@ -222,16 +233,75 @@
         var: result.container
       when: result.exists
 
-    - name: output opensearch admin password
-      ansible.builtin.debug:
-       msg: "Admin password is {{ adminpassword.stdout }}"
+#    - name: output opensearch admin password
+#      ansible.builtin.debug:
+#       msg: "Admin password is {{ adminpassword.stdout }}"
+   
+    - name: make adminpassword.sh executable 
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/bin/adminpassword.sh"
+        mode: '0755'
 
-    # - name: configure opensearch
-    - name: set opensearch admin password
+    - name: ensure internal_users.yml is owned by opensearch
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/config/internal_users.yml"
+        owner: 1000
+        group: 1000
+        mode: '0664'
+
+    - name: run adminpassword.sh in OpenSearch container
+      community.docker.docker_container_exec:
+        container: opensearch-node1 
+        command: /usr/share/opensearch/bin/adminpassword.sh
+      register: hash_output
+
+    - name: ensure password hash was generated
+      ansible.builtin.debug:
+        msg: "Hash output: {{ hash_output.stdout }}"
+      when: hash_output.rc == 0
+
+    - name: update internal_users.yml with the new password hash
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/config/internal_users.yml"
+        regexp: '^admin:\n hash:'
+        line: "  hash: '{{ hash_output.stdout }}'"
+      when: hash_output.rc == 0
+
+    - name: update internal_users.yml with the new password hash
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/config/internal_users.yml"
+        regexp: '^kibanaserver:\n hash:'
+        line: "  hash: '{{ hash_output.stdout }}'"
+      when: hash_output.rc == 0
+
+#    - name: Set OpenSearch admin password inside the container
+#      community.docker.docker_container_exec:
+#        container: opensearch-node1
+#        command: "/bin/bash -c 'OPENSEARCH_INITIAL_ADMIN_PASSWORD={{ openpassword.stdout }} /usr/share/opensearch/bin/adminpassword.sh'"
+#      register: result
+
+    # debug the result of the password script
+#    - name: Debug result of password script
+#      ansible.builtin.debug:
+#        msg: "{{ result.stdout }}"
+
+    - name: apply security settings
       community.docker.docker_container_exec:
         container: opensearch-node1
-        command: /bin/bash -c "export OPENSEARCH_INITIAL_ADMIN_PASSWORD="{{ opensearch_initial_admin_password.stdout }} && "/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security -icl -key /usr/share/opensearch/config/kirk-key.pem -cert /usr/share/opensearch/config/kirk.pem -cacert /usr/share/opensearch/config/root-ca.pem -nhnv"
-        chdir: /root
+        command: "/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh \
+                 -cd /usr/share/opensearch/config/opensearch-security \
+                 -icl \
+                 -key /usr/share/opensearch/config/kirk-key.pem \
+                 -cert /usr/share/opensearch/config/kirk.pem \
+                 -cacert /usr/share/opensearch/config/root-ca.pem \
+                 -nhnv"
+
+    # - name: configure opensearch
+#    - name: set opensearch admin password
+#      community.docker.docker_container_exec:
+#        container: opensearch-node1
+#        command: /bin/bash -c "export OPENSEARCH_INITIAL_ADMIN_PASSWORD="{{ openpassword.stdout }} && "/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security -icl -key /usr/share/opensearch/config/kirk-key.pem -cert /usr/share/opensearch/config/kirk.pem -cacert /usr/share/opensearch/config/root-ca.pem -nhnv"
+#        chdir: /root
 
 #    - name: configure opensearch-dashboards
 #      tags: test
