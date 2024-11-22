@@ -3,7 +3,7 @@
   hosts: trainingvms
   become: true
   vars_files:
-    - pocketsoc-ng_vars.env
+    - pocketsoc-ng_var.env
 
   tasks:
     - name: set sysctl
@@ -72,6 +72,10 @@
     - name: Install portainer
       ignore_errors: yes
       shell: docker volume create portainer_data && docker run -d -p 8000:8000 -p 9443:9443 -p 8081:9000 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data -v certificates:/certs portainer/portainer-ce:2.20.3 #--sslcert /certs/host-certs/live/{{ ansible_fqdn }}/cert.pem --sslkey /certs/host-certs/live/{{ ansible_fqdn }}/privkey.pem
+
+    - name: debug
+      debug:
+        var: admin_password_command
 
     - name: build portainer admin password
       tags:
@@ -187,17 +191,11 @@
         url: "http://localhost:8081/api/stacks?type=2&method=repository&endpointId={{ environments.json[0].Id }}"
         method: POST
         timeout: 600
-        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/opensearch\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ openpassword.stdout }}\"},{\"name\": \"MISP_HOSTNAME\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}/{{ inventory_hostname }}/misp\"},{\"name\": \"NODE_NAME\", \"value\": \"{{ inventory_hostname }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
+        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/new\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ openpassword.stdout }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"HTTPS_PORT\", \"value\": \"{{ misp_port }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
         body_format: json
         headers:
           Content-Type: "application/json"
           Authorization: "{{ auth.json.jwt  }}"
-
-#    - name: Copy misp config to nodes
-#      template:
-#        src: templates/config.php.j2
-#        dest: "/data/compose/1/persistent/pocketsoc-ng/data/config/config.php"
-#      when: inventory_hostname in ['node-1', 'node-2']
 
     - name: Wait for opensearch to come up
       ansible.builtin.wait_for:
@@ -284,6 +282,34 @@
 #    - name: Debug result of password script
 #      ansible.builtin.debug:
 #        msg: "{{ result.stdout }}"
+  
+    - name: Copy root-ca to nodes
+      copy:
+        src: templates/root-ca.pem
+        dest: "/var/lib/docker/volumes/certificates/_data"
+
+    - name: Ensure permission to certificate dir
+      file:
+        path: "/var/lib/docker/volumes/certificates/_data/server.crt"
+        owner: 1000
+        group: 1000
+        mode: '0644'
+
+    - name: Ensure permission to certificate dir
+      file:
+        path: "/var/lib/docker/volumes/certificates/_data/server.key"
+        owner: 1000
+        group: 1000
+        mode: '0644'
+
+    - name: check portainer admin password
+      ansible.builtin.debug:
+        msg: "{{ adminpassword.stdout }}"
+
+    - name: check opensearch admin password
+      ansible.builtin.debug:
+        msg: "{{ openpassword.stdout }}"
+
 
     - name: apply security settings
       community.docker.docker_container_exec:
