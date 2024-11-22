@@ -87,18 +87,6 @@
       ansible.builtin.debug:
         msg: "{{ adminpassword.stdout }}"
 
-#    - name: Get user home directory
-#      ansible.builtin.set_fact:
-#        user_home: "{{ ansible_env.HOME }}"
-
-#    - name: separate password for opensearch
-#      shell: echo "{{ OPENSEARCH_INITIAL_ADMIN_PASSWORD }}"
-#      register: opensearch_initial_admin_password
-
-#    - name: check opensearch admin password
-#      ansible.builtin.debug:
-#        msg: "{{ opensearch_initial_admin_password.stdout }}"
-
     - name: build opensearch admin password
       tags:
         - test
@@ -231,10 +219,6 @@
         var: result.container
       when: result.exists
 
-#    - name: output opensearch admin password
-#      ansible.builtin.debug:
-#       msg: "Admin password is {{ adminpassword.stdout }}"
-   
     - name: make adminpassword.sh executable 
       ansible.builtin.file:
         path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/bin/adminpassword.sh"
@@ -272,17 +256,6 @@
         line: "  hash: '{{ hash_output.stdout }}'"
       when: hash_output.rc == 0
 
-#    - name: Set OpenSearch admin password inside the container
-#      community.docker.docker_container_exec:
-#        container: opensearch-node1
-#        command: "/bin/bash -c 'OPENSEARCH_INITIAL_ADMIN_PASSWORD={{ openpassword.stdout }} /usr/share/opensearch/bin/adminpassword.sh'"
-#      register: result
-
-    # debug the result of the password script
-#    - name: Debug result of password script
-#      ansible.builtin.debug:
-#        msg: "{{ result.stdout }}"
-  
     - name: Copy root-ca to nodes
       copy:
         src: templates/root-ca.pem
@@ -321,23 +294,3 @@
                  -cert /usr/share/opensearch/config/kirk.pem \
                  -cacert /usr/share/opensearch/config/root-ca.pem \
                  -nhnv"
-
-    # - name: configure opensearch
-#    - name: set opensearch admin password
-#      community.docker.docker_container_exec:
-#        container: opensearch-node1
-#        command: /bin/bash -c "export OPENSEARCH_INITIAL_ADMIN_PASSWORD="{{ openpassword.stdout }} && "/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security -icl -key /usr/share/opensearch/config/kirk-key.pem -cert /usr/share/opensearch/config/kirk.pem -cacert /usr/share/opensearch/config/root-ca.pem -nhnv"
-#        chdir: /root
-
-#    - name: configure opensearch-dashboards
-#      tags: test
-#      community.docker.docker_container_exec:
-#        container: opensearch-dashboards
-#        command: /bin/bash -c "/usr/bin/sed -i \"s#REPLACETHISTEXT#"{{ adminpassword.stdout }}"#g\" /usr/share/opensearch-dashboards/config/opensearch_dashboards.yml"
-#        chdir: /root
-
-#    - name: Restart opensearch-dashboards
-#      community.docker.docker_container:
-#        name: opensearch-dashboards
-#        state: started
-#        restart: yes
