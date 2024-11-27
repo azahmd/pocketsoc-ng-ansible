@@ -3,7 +3,7 @@
   hosts: trainingvms
   become: true
   vars_files:
-    - pocketsoc-ng_vars.env
+    - pocketsoc-ng_var.env
 
   tasks:
     - name: set sysctl
@@ -73,6 +73,10 @@
       ignore_errors: yes
       shell: docker volume create portainer_data && docker run -d -p 8000:8000 -p 9443:9443 -p 8081:9000 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data -v certificates:/certs portainer/portainer-ce:2.20.3 #--sslcert /certs/host-certs/live/{{ ansible_fqdn }}/cert.pem --sslkey /certs/host-certs/live/{{ ansible_fqdn }}/privkey.pem
 
+    - name: debug
+      debug:
+        var: admin_password_command
+
     - name: build portainer admin password
       tags:
         - test
@@ -82,18 +86,6 @@
     - name: check portainer admin password
       ansible.builtin.debug:
         msg: "{{ adminpassword.stdout }}"
-
-#    - name: Get user home directory
-#      ansible.builtin.set_fact:
-#        user_home: "{{ ansible_env.HOME }}"
-
-#    - name: separate password for opensearch
-#      shell: echo "{{ OPENSEARCH_INITIAL_ADMIN_PASSWORD }}"
-#      register: opensearch_initial_admin_password
-
-#    - name: check opensearch admin password
-#      ansible.builtin.debug:
-#        msg: "{{ opensearch_initial_admin_password.stdout }}"
 
     - name: build opensearch admin password
       tags:
@@ -187,17 +179,11 @@
         url: "http://localhost:8081/api/stacks?type=2&method=repository&endpointId={{ environments.json[0].Id }}"
         method: POST
         timeout: 600
-        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/opensearch\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ openpassword.stdout }}\"},{\"name\": \"MISP_HOSTNAME\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}/{{ inventory_hostname }}/misp\"},{\"name\": \"NODE_NAME\", \"value\": \"{{ inventory_hostname }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
+        body: " { \"Name\": \"pocketsoc-ng\", \"RepositoryURL\": \"https://github.com/azahmd/pocketsoc-ng.git\", \"RepositoryReferenceName\": \"refs/heads/main\", \"composeFile\": \"docker-compose.yml\", \"env\": [{\"name\": \"HOST_HOSTNAME\", \"value\": \"{{ ansible_fqdn }}\"},{\"name\": \"OPENSEARCH_INITIAL_ADMIN_PASSWORD\", \"value\": \"{{ openpassword.stdout }}\"},{\"name\": \"MISP_BASEURL\", \"value\": \"{{ haproxy_fqdn }}\"},{\"name\": \"HTTPS_PORT\", \"value\": \"{{ misp_port }}\"},{\"name\": \"USER_HOME\", \"value\": \"{{ ansible_env.HOME }}\"}], \"auto-update\": { \"interval\": \"5m\"} }"
         body_format: json
         headers:
           Content-Type: "application/json"
           Authorization: "{{ auth.json.jwt  }}"
-
-#    - name: Copy misp config to nodes
-#      template:
-#        src: templates/config.php.j2
-#        dest: "/data/compose/1/persistent/pocketsoc-ng/data/config/config.php"
-#      when: inventory_hostname in ['node-1', 'node-2']
 
     - name: Wait for opensearch to come up
       ansible.builtin.wait_for:
@@ -233,10 +219,6 @@
         var: result.container
       when: result.exists
 
-#    - name: output opensearch admin password
-#      ansible.builtin.debug:
-#       msg: "Admin password is {{ adminpassword.stdout }}"
-   
     - name: make adminpassword.sh executable 
       ansible.builtin.file:
         path: "{{ ansible_env.HOME }}/pocketsoc-ng/components/opensearch/bin/adminpassword.sh"
@@ -274,16 +256,33 @@
         line: "  hash: '{{ hash_output.stdout }}'"
       when: hash_output.rc == 0
 
-#    - name: Set OpenSearch admin password inside the container
-#      community.docker.docker_container_exec:
-#        container: opensearch-node1
-#        command: "/bin/bash -c 'OPENSEARCH_INITIAL_ADMIN_PASSWORD={{ openpassword.stdout }} /usr/share/opensearch/bin/adminpassword.sh'"
-#      register: result
+    - name: Copy root-ca to nodes
+      copy:
+        src: templates/root-ca.pem
+        dest: "/var/lib/docker/volumes/certificates/_data"
 
-    # debug the result of the password script
-#    - name: Debug result of password script
-#      ansible.builtin.debug:
-#        msg: "{{ result.stdout }}"
+    - name: Ensure permission to certificate dir
+      file:
+        path: "/var/lib/docker/volumes/certificates/_data/server.crt"
+        owner: 1000
+        group: 1000
+        mode: '0644'
+
+    - name: Ensure permission to certificate dir
+      file:
+        path: "/var/lib/docker/volumes/certificates/_data/server.key"
+        owner: 1000
+        group: 1000
+        mode: '0644'
+
+    - name: check portainer admin password
+      ansible.builtin.debug:
+        msg: "{{ adminpassword.stdout }}"
+
+    - name: check opensearch admin password
+      ansible.builtin.debug:
+        msg: "{{ openpassword.stdout }}"
+
 
     - name: apply security settings
       community.docker.docker_container_exec:
@@ -295,23 +294,3 @@
                  -cert /usr/share/opensearch/config/kirk.pem \
                  -cacert /usr/share/opensearch/config/root-ca.pem \
                  -nhnv"
-
-    # - name: configure opensearch
-#    - name: set opensearch admin password
-#      community.docker.docker_container_exec:
-#        container: opensearch-node1
-#        command: /bin/bash -c "export OPENSEARCH_INITIAL_ADMIN_PASSWORD="{{ openpassword.stdout }} && "/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security -icl -key /usr/share/opensearch/config/kirk-key.pem -cert /usr/share/opensearch/config/kirk.pem -cacert /usr/share/opensearch/config/root-ca.pem -nhnv"
-#        chdir: /root
-
-#    - name: configure opensearch-dashboards
-#      tags: test
-#      community.docker.docker_container_exec:
-#        container: opensearch-dashboards
-#        command: /bin/bash -c "/usr/bin/sed -i \"s#REPLACETHISTEXT#"{{ adminpassword.stdout }}"#g\" /usr/share/opensearch-dashboards/config/opensearch_dashboards.yml"
-#        chdir: /root
-
-#    - name: Restart opensearch-dashboards
-#      community.docker.docker_container:
-#        name: opensearch-dashboards
-#        state: started
-#        restart: yes
