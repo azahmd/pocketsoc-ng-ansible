@@ -20,6 +20,7 @@ ansible-galaxy collection install ansible.posix community.docker
 # Variables
 salt: "$SALT"
 admin_password_command: "$ADMIN_PASSWORD_COMMAND"
+haproxy_fqdn: "$HAPROXY_FQDN"
 ```
 
 `admin_password_command` should be formulated to print the desired password to `stdout`, eg `openssl rand -base64 32`
