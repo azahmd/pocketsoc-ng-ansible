@@ -162,7 +162,7 @@
       git:
         repo: 'https://github.com/azahmd/pocketsoc-ng'
         dest: "{{ ansible_env.HOME }}/pocketsoc-ng"
-        version: 'opensearch'
+        version: 'main'
         force: yes
 
 
